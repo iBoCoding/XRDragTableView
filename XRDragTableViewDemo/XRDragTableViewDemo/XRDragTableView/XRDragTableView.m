@@ -37,7 +37,6 @@ typedef enum {
 
 - (void)setDataArray:(NSMutableArray *)dataArray {
     _dataArray = dataArray;
-    //将原始数组copy一份，便于以后的复原操作
     _originalArray = [dataArray mutableCopy];
     if (_isGroup) {
         for (int i = 0; i < dataArray.count; i++) {
@@ -45,7 +44,6 @@ typedef enum {
         }
     }
 }
-
 
 - (void)moveRow:(UILongPressGestureRecognizer *)sender {
     //获取点击的位置
@@ -62,18 +60,11 @@ typedef enum {
         self.cellImageView = [self createCellImageView:cell];
         
         //更改imageView的中心点为手指点击位置
-        __block CGPoint center = cell.center;
-        _cellImageView.center = center;
-        _cellImageView.alpha = 0.0;
-        [UIView animateWithDuration:0.25 animations:^{
-            center.y = point.y;
-            _cellImageView.center = center;
-            _cellImageView.transform = CGAffineTransformMakeScale(1.05, 1.05);
-            _cellImageView.alpha = 0.9;
-            cell.alpha = 0.0;
-        } completion:^(BOOL finished) {
-            cell.hidden = YES;
-        }];
+        CGPoint center = cell.center;
+        self.cellImageView.center = center;
+        
+        //隐藏要移动的cell
+        cell.hidden = YES;
         
     } else if (sender.state == UIGestureRecognizerStateChanged){
         //根据手势的位置，获取手指移动到的cell的indexPath
@@ -83,7 +74,7 @@ typedef enum {
         CGPoint center = self.cellImageView.center;
         center.y = point.y;
         self.cellImageView.center = center;
-
+        
         //判断cell是否被拖拽到了tableView的边缘，如果是，则自动滚动tableView
         if ([self isScrollToEdge]) {
             [self startTimerToScrollTableView];
@@ -95,7 +86,7 @@ typedef enum {
          若当前手指所在indexPath不是要移动cell的indexPath，
          且是插入模式，则执行cell的插入操作
          每次移动手指都要执行该判断，实时插入
-        */
+         */
         if (_toIndexPath && ![_toIndexPath isEqual:_fromIndexPath] && !self.isExchange)
             [self insertCell:_toIndexPath];
         
@@ -109,28 +100,19 @@ typedef enum {
         //将隐藏的cell显示出来，并将imageView移除掉
         UITableViewCell *cell = [self cellForRowAtIndexPath:_fromIndexPath];
         cell.hidden = NO;
-        cell.alpha = 0;
-        [UIView animateWithDuration:0.25 animations:^{
-            
-            cell.alpha = 1;
-            _cellImageView.alpha = 0;
-            _cellImageView.transform = CGAffineTransformIdentity;
-            _cellImageView.center = cell.center;
-        } completion:^(BOOL finished) {
-            [self.cellImageView removeFromSuperview];
-            self.cellImageView = nil;
-        }];
+        [self.cellImageView removeFromSuperview];
+        if (self.commitEditingBlock) {
+            self.commitEditingBlock();
+        }
     }
 }
 
 - (BOOL)isScrollToEdge {
-    //imageView拖动到tableView顶部，且tableView没有滚动到最上面
     if ((CGRectGetMaxY(self.cellImageView.frame) > self.contentOffset.y + self.frame.size.height - self.contentInset.bottom) && (self.contentOffset.y < self.contentSize.height - self.frame.size.height + self.contentInset.bottom)) {
         self.autoScroll = AutoScrollDown;
         return YES;
     }
     
-    //imageView拖动到tableView底部，且tableView没有滚动到最下面
     if ((self.cellImageView.frame.origin.y < self.contentOffset.y + self.contentInset.top) && (self.contentOffset.y > -self.contentInset.top)) {
         self.autoScroll = AutoScrollUp;
         return YES;
@@ -146,20 +128,16 @@ typedef enum {
 
 
 - (void)scrollTableView{
-    //如果已经滚动到最上面或最下面，则停止定时器并返回
     if ((_autoScroll == AutoScrollUp && self.contentOffset.y <= -self.contentInset.top)
         || (_autoScroll == AutoScrollDown && self.contentOffset.y >= self.contentSize.height - self.frame.size.height + self.contentInset.bottom)) {
-            [_displayLink invalidate];
-            return;
+        [_displayLink invalidate];
+        return;
     }
     
-    //改变tableView的contentOffset，实现自动滚动
     CGFloat height = _autoScroll == AutoScrollUp? -_scrollSpeed : _scrollSpeed;
     [self setContentOffset:CGPointMake(0, self.contentOffset.y + height)];
-    //改变cellImageView的位置为手指所在位置
     _cellImageView.center = CGPointMake(_cellImageView.center.x, _cellImageView.center.y + height);
     
-    //滚动tableView的同时也要执行插入操作
     _toIndexPath = [self indexPathForRowAtPoint:_cellImageView.center];
     if (_toIndexPath && ![_toIndexPath isEqual:_fromIndexPath] && !self.isExchange)
         [self insertCell:_toIndexPath];
@@ -183,6 +161,9 @@ typedef enum {
         //交换两个cell的数据模型
         [self.dataArray exchangeObjectAtIndex:_fromIndexPath.row withObjectAtIndex:toIndexPath.row];
     }
+    if (self.moveRowBlock) {
+        self.moveRowBlock(_fromIndexPath, toIndexPath);
+    }
     [self reloadData];
     
     UITableViewCell *cell = [self cellForRowAtIndexPath:toIndexPath];
@@ -205,6 +186,9 @@ typedef enum {
     } else {
         [self.dataArray exchangeObjectAtIndex:_fromIndexPath.row withObjectAtIndex:toIndexPath.row];
     }
+    if (self.moveRowBlock) {
+        self.moveRowBlock(_fromIndexPath, toIndexPath);
+    }
     [self reloadData];
 }
 
@@ -223,14 +207,18 @@ typedef enum {
 - (UIImageView *)createCellImageView:(UITableViewCell *)cell {
     //打开图形上下文，并将cell的根层渲染到上下文中，生成图片
     UIGraphicsBeginImageContext(cell.bounds.size);
+    UIColor *color = cell.backgroundColor;
+    cell.backgroundColor = [UIColor lightGrayColor];
     [cell.layer renderInContext:UIGraphicsGetCurrentContext()];
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     UIImageView *cellImageView = [[UIImageView alloc] initWithImage:image];
-    cellImageView.layer.shadowOffset = CGSizeMake(-5.0, 0.0);
-    cellImageView.layer.shadowRadius = 5.0;
+    //    cellImageView.alpha = 0.8;
     [self addSubview:cellImageView];
+    cell.backgroundColor = color;
+    
     return cellImageView;
 }
 
 @end
+

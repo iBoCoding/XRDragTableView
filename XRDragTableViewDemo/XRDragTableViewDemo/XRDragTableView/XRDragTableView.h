@@ -36,8 +36,14 @@
  */
 @property (nonatomic, assign) CGFloat scrollSpeed;
 
+@property (nonatomic, copy) void(^commitEditingBlock)(void);
+
+@property (nonatomic, copy) void(^moveRowBlock)(NSIndexPath *fromIndexPath, NSIndexPath *toIndexPath);
+
 /**
- *  所有cell恢复到拖动之前的位置
+ *  所有cell恢复到之前的位置
  */
 - (void)resetCellLocation;
+
 @end
+
